@@ -101,6 +101,18 @@
     e.preventDefault();
     t.parentElement.querySelectorAll('.on').forEach(x => x.classList.remove('on'));
     t.classList.add('on');
+
+    // Swap the main image when a photo thumbnail is clicked
+    const src = t.dataset.img;
+    const mainImg = document.getElementById('pdp-image');
+    if (src && mainImg) {
+      mainImg.src = src;
+      const inner = t.querySelector('img');
+      if (inner && inner.alt) mainImg.alt = inner.alt;
+      return;
+    }
+
+    // Legacy: SVG thumbs re-tint the background
     const visual = document.getElementById('visual');
     if (!visual) return;
     if (t.classList.contains('thumb--paper')) {
