@@ -69,7 +69,7 @@
       try {
         await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
           to_email:  email,
-          magic_link: magicLink,
+          userName: magicLink,
           // Optional extras templates can use:
           link_short: magicLink.replace(/^https?:\/\//, ''),
           expires_in: '15 minutes',
