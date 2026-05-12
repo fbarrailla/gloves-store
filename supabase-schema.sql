@@ -3,10 +3,14 @@
 -- Run this in the SQL editor at:
 --   https://supabase.com/dashboard/project/dhfyjdkazhxkhddnacsq/sql
 --
--- After running, also:
---   1. Auth → URL Configuration → add both redirect URLs:
---        http://localhost:4477/admin/dashboard.html
---        https://fbarrailla.github.io/gloves-store/admin/dashboard.html
+-- After running, also do this in the Supabase dashboard:
+--
+--   1. Auth → URL Configuration:
+--        Site URL:        http://sarung-tangan-kiper.com
+--        Redirect URLs:   http://sarung-tangan-kiper.com/admin/dashboard.html
+--                         https://sarung-tangan-kiper.com/admin/dashboard.html
+--                         http://localhost:4477/admin/dashboard.html   (dev)
+--
 --   2. Insert YOUR email into public.admins (last block of this file).
 -- ============================================================
 

@@ -39,12 +39,15 @@
       const email = document.getElementById('email').value.trim();
       btn.disabled = true;
       btn.textContent = 'Sending…';
+      // Magic links always come back to production, so a link clicked on a
+      // phone email client lands on the live admin — not on someone's laptop.
+      // Make sure this URL is in Supabase → Auth → URL Configuration → Redirect URLs.
+      const PRODUCTION_REDIRECT = 'http://sarung-tangan-kiper.com/admin/dashboard.html';
+
       const { error } = await supabase.auth.signInWithOtp({
         email,
         options: {
-          // After clicking the link the user lands on dashboard.html.
-          // Make sure this URL is added to "Redirect URLs" in Supabase Auth settings.
-          emailRedirectTo: new URL('dashboard.html', location.href).toString(),
+          emailRedirectTo: PRODUCTION_REDIRECT,
           shouldCreateUser: true,
         },
       });
