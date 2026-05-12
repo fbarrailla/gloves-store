@@ -24,8 +24,10 @@
   }
   window.addToQueue = function () {
     const c = readCart();
-    c.push({ sku: document.title.split(' ')[0], at: Date.now() });
+    const sku = document.title.split(' ')[0];
+    c.push({ sku, at: Date.now() });
     writeCart(c);
+    if (window.STKSupabase?.trackBagAdd) window.STKSupabase.trackBagAdd(sku);
     const last = document.activeElement;
     if (last && last.classList.contains('btn')) {
       const original = last.textContent;

@@ -482,7 +482,7 @@
   <span class="tag" style="color: var(--strike-soft); margin-bottom: 0.5rem;">Drop alerts</span>
   <h2>Get drops first.</h2>
   <p>Join the list and we'll send you a single email when a new drop opens. No marketing, no spam — that's a promise.</p>
-  <form onsubmit="event.preventDefault(); this.querySelector('button').textContent='✓ Subscribed';">
+  <form>
     <input type="email" placeholder="your@email.com" required>
     <button type="submit" class="btn btn--paper btn--no-arrow">Subscribe</button>
   </form>
@@ -534,5 +534,6 @@
 </footer>
 
 <script src="main.js"></script>
+<script type="module" src="supabase.js"></script>
 </body>
 </html>
