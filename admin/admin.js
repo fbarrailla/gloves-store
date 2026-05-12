@@ -22,11 +22,9 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 });
 
 /* ----- EmailJS public key (delivered magic links) ----- */
-export const EMAILJS_PUBLIC_KEY = '-BGhKDSFxI8D8E1hT';
-//                                ↓ fill these in from the EmailJS dashboard
-//                                  https://dashboard.emailjs.com/admin
-export const EMAILJS_SERVICE_ID  = 'service_stk';
-export const EMAILJS_TEMPLATE_ID = 'template_admin_magic';
+export const EMAILJS_PUBLIC_KEY  = '-BGhKDSFxI8D8E1hT';
+export const EMAILJS_SERVICE_ID  = 'service_nop1bn9';
+export const EMAILJS_TEMPLATE_ID = 'template_oj72mqh';
 // Your template should reference these variables:
 //   {{to_email}}    — destination
 //   {{magic_link}}  — the full URL the user clicks
