@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STK Admin — Signing in…</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body class="login">
+  <div class="login__card" id="card">
+    <a class="login__brand" href="../index.html">STK <small>admin</small></a>
+    <h1 id="title">Signing you in…</h1>
+    <p class="login__lede" id="lede"><span class="spinner"></span> Validating your magic link.</p>
+    <div id="actions" style="display:none; margin-top:1.25rem;">
+      <a class="btn btn--full" href="index.html">Request a new link</a>
+    </div>
+  </div>
+
+  <script type="module">
+    import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+    import { SESSION_KEY } from './admin.js';
+
+    const SUPABASE_URL = 'https://dhfyjdkazhxkhddnacsq.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_qKcopQkE1zFa2ifMMIkVow_q4i1Xi1J';
+    // Plain client (no session token yet) — we're about to create one.
+    const sb = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+      auth: { persistSession: false },
+    });
+
+    const title   = document.getElementById('title');
+    const lede    = document.getElementById('lede');
+    const actions = document.getElementById('actions');
+
+    const token = new URLSearchParams(location.search).get('lt');
+    if (!token) {
+      title.textContent = 'Invalid link';
+      lede.textContent = 'This link is missing its token. Request a new one.';
+      actions.style.display = 'block';
+    } else {
+      const { data: sessionToken, error } = await sb.rpc('consume_admin_login_token', { p_token: token });
+      if (error || !sessionToken) {
+        title.textContent = 'Link expired';
+        lede.innerHTML = error
+          ? `<strong style="color:var(--strike);">${error.message}</strong>`
+          : 'This link is invalid, expired, or already used. Request a fresh one.';
+        actions.style.display = 'block';
+      } else {
+        localStorage.setItem(SESSION_KEY, sessionToken);
+        location.replace('dashboard.html');
+      }
+    }
+  </script>
+</body>
+</html>

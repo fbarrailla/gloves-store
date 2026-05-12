@@ -6,12 +6,14 @@
 <title>STK Admin — Sign in</title>
 <meta name="robots" content="noindex, nofollow">
 <link rel="stylesheet" href="admin.css">
+<!-- EmailJS browser SDK -->
+<script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 </head>
 <body class="login">
   <div class="login__card">
     <a class="login__brand" href="../index.html">STK <small>admin</small></a>
     <h1>Sign in to admin</h1>
-    <p class="login__lede">Enter your email and we'll send a one-tap sign-in link. No password needed.</p>
+    <p class="login__lede">Enter your email and we'll send a one-tap sign-in link via EmailJS. No password needed.</p>
     <form id="loginForm" autocomplete="off">
       <div class="field">
         <input type="email" id="email" placeholder="you@stk.id" required autocomplete="email">
@@ -19,19 +21,28 @@
       <button type="submit" class="btn btn--full" id="submitBtn">Send magic link</button>
     </form>
     <p class="login__hint" id="status">
-      Magic links arrive within ~30 seconds. Check spam if you don't see it.
+      Magic links expire after 15 minutes. Check spam if you don't see it.
     </p>
   </div>
 
   <script type="module">
-    import { supabase, toast } from './admin.js';
+    import {
+      supabase, toast,
+      EMAILJS_PUBLIC_KEY, EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID,
+      SESSION_KEY,
+    } from './admin.js';
 
-    // If already signed in, go to dashboard
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) location.replace('dashboard.html');
+    // If already signed in, go straight to the dashboard.
+    if (localStorage.getItem(SESSION_KEY)) {
+      const { data: email } = await supabase.rpc('verify_admin_session');
+      if (email) location.replace('dashboard.html');
+      else localStorage.removeItem(SESSION_KEY);
+    }
+
+    emailjs.init({ publicKey: EMAILJS_PUBLIC_KEY });
 
     const form = document.getElementById('loginForm');
-    const btn = document.getElementById('submitBtn');
+    const btn  = document.getElementById('submitBtn');
     const status = document.getElementById('status');
 
     form.addEventListener('submit', async (e) => {
@@ -39,26 +50,40 @@
       const email = document.getElementById('email').value.trim();
       btn.disabled = true;
       btn.textContent = 'Sending…';
-      // Magic links always come back to production, so a link clicked on a
-      // phone email client lands on the live admin — not on someone's laptop.
-      // Make sure this URL is in Supabase → Auth → URL Configuration → Redirect URLs.
-      const PRODUCTION_REDIRECT = 'http://sarung-tangan-kiper.com/admin/dashboard.html';
 
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: {
-          emailRedirectTo: PRODUCTION_REDIRECT,
-          shouldCreateUser: true,
-        },
-      });
+      // 1. Mint a single-use token in Supabase. The RPC always succeeds
+      //    (even for non-admin emails) so we don't leak the admin list.
+      const { data: tokenId, error } = await supabase.rpc('request_admin_login', { p_email: email });
       if (error) {
-        toast(error.message || 'Could not send link', 'err');
+        toast(error.message || 'Could not request link', 'err');
         status.textContent = error.message;
         btn.disabled = false;
         btn.textContent = 'Send magic link';
         return;
       }
-      status.innerHTML = `Magic link sent to <strong style="color:var(--ink)">${email}</strong>. Open it on this device to finish signing in.`;
+
+      // 2. Build the magic link the user will click in their inbox.
+      const magicLink = `${location.origin}/admin/verify.html?lt=${tokenId}`;
+
+      // 3. Hand the email off to EmailJS for actual delivery.
+      try {
+        await emailjs.send(EMAILJS_SERVICE_ID, EMAILJS_TEMPLATE_ID, {
+          to_email:  email,
+          magic_link: magicLink,
+          // Optional extras templates can use:
+          link_short: magicLink.replace(/^https?:\/\//, ''),
+          expires_in: '15 minutes',
+        });
+      } catch (err) {
+        console.error('EmailJS error:', err);
+        toast('Email delivery failed — see console', 'err');
+        status.innerHTML = `<strong style="color:var(--strike);">EmailJS error.</strong> Check that the service ID, template ID and public key in <code>admin.js</code> match your EmailJS dashboard.`;
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+        return;
+      }
+
+      status.innerHTML = `Magic link sent to <strong style="color:var(--ink)">${email}</strong>. Click the link in your inbox within 15 minutes.`;
       btn.textContent = '✓ Link sent';
     });
   </script>

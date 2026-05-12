@@ -1,6 +1,7 @@
 /* ============================================================
    STK · Admin core
-   shared: supabase client, auth guard, sidebar, toast, helpers
+   - Magic link delivered via EmailJS (not Supabase Auth)
+   - Session token stored in localStorage + sent as X-Admin-Token
    ============================================================ */
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -8,18 +9,31 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 const SUPABASE_URL = 'https://dhfyjdkazhxkhddnacsq.supabase.co';
 const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_qKcopQkE1zFa2ifMMIkVow_q4i1Xi1J';
 
+export const SESSION_KEY = 'stk-admin-session';
+export const sessionToken = localStorage.getItem(SESSION_KEY);
+
+// Client carries the admin session token on every request. RLS uses
+// it to grant access — anon without this header sees nothing private.
 export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    storage: localStorage,
-    storageKey: 'stk-admin-auth',
+  auth: { persistSession: false },
+  global: {
+    headers: sessionToken ? { 'X-Admin-Token': sessionToken } : {},
   },
 });
 
+/* ----- EmailJS public key (delivered magic links) ----- */
+export const EMAILJS_PUBLIC_KEY = '-BGhKDSFxI8D8E1hT';
+//                                ↓ fill these in from the EmailJS dashboard
+//                                  https://dashboard.emailjs.com/admin
+export const EMAILJS_SERVICE_ID  = 'service_stk';
+export const EMAILJS_TEMPLATE_ID = 'template_admin_magic';
+// Your template should reference these variables:
+//   {{to_email}}    — destination
+//   {{magic_link}}  — the full URL the user clicks
+
 /* ----- toasts ----- */
 export function toast(msg, kind = '') {
-  let el = document.createElement('div');
+  const el = document.createElement('div');
   el.className = 'toast' + (kind === 'err' ? ' toast--err' : '');
   el.textContent = msg;
   document.body.appendChild(el);
@@ -32,12 +46,21 @@ export function toast(msg, kind = '') {
 
 /* ----- auth guard ----- */
 export async function requireAuth() {
-  const { data: { session } } = await supabase.auth.getSession();
-  if (!session) {
+  if (!sessionToken) { location.href = 'index.html'; return null; }
+  const { data: email, error } = await supabase.rpc('verify_admin_session');
+  if (error || !email) {
+    localStorage.removeItem(SESSION_KEY);
     location.href = 'index.html';
     return null;
   }
-  return session;
+  return { user: { email } };
+}
+
+/* ----- sign out ----- */
+export async function signOut() {
+  await supabase.rpc('revoke_admin_session');
+  localStorage.removeItem(SESSION_KEY);
+  location.href = 'index.html';
 }
 
 /* ----- sidebar shell ----- */
@@ -75,10 +98,7 @@ export function renderShell({ current, session }) {
     </div>
   `;
 
-  document.getElementById('signOut').addEventListener('click', async () => {
-    await supabase.auth.signOut();
-    location.href = 'index.html';
-  });
+  document.getElementById('signOut').addEventListener('click', signOut);
 }
 
 /* ----- sidebar counts ----- */

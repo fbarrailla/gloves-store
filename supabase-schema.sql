@@ -5,11 +5,8 @@
 --
 -- After running, also do this in the Supabase dashboard:
 --
---   1. Auth → URL Configuration:
---        Site URL:        http://sarung-tangan-kiper.com
---        Redirect URLs:   http://sarung-tangan-kiper.com/admin/dashboard.html
---                         https://sarung-tangan-kiper.com/admin/dashboard.html
---                         http://localhost:4477/admin/dashboard.html   (dev)
+--   1. (No more redirect URL config needed — magic links are sent
+--      via EmailJS and verified by our own RPC, not Supabase Auth.)
 --
 --   2. Insert YOUR email into public.admins (last block of this file).
 -- ============================================================
@@ -27,6 +24,8 @@ alter table public.newsletter_subscribers enable row level security;
 drop policy if exists "anon can insert"      on public.newsletter_subscribers;
 drop policy if exists "admins can read"      on public.newsletter_subscribers;
 drop policy if exists "admins can delete"    on public.newsletter_subscribers;
+drop policy if exists "session admin reads"  on public.newsletter_subscribers;
+drop policy if exists "session admin deletes" on public.newsletter_subscribers;
 
 create policy "anon can insert"
   on public.newsletter_subscribers for insert
@@ -44,9 +43,11 @@ create table if not exists public.contact_submissions (
 
 alter table public.contact_submissions enable row level security;
 
-drop policy if exists "anon can insert"   on public.contact_submissions;
-drop policy if exists "admins can read"   on public.contact_submissions;
-drop policy if exists "admins can delete" on public.contact_submissions;
+drop policy if exists "anon can insert"      on public.contact_submissions;
+drop policy if exists "admins can read"      on public.contact_submissions;
+drop policy if exists "admins can delete"    on public.contact_submissions;
+drop policy if exists "session admin reads"  on public.contact_submissions;
+drop policy if exists "session admin deletes" on public.contact_submissions;
 
 create policy "anon can insert"
   on public.contact_submissions for insert
@@ -66,8 +67,9 @@ create table if not exists public.bag_events (
 
 alter table public.bag_events enable row level security;
 
-drop policy if exists "anon can insert" on public.bag_events;
-drop policy if exists "admins can read" on public.bag_events;
+drop policy if exists "anon can insert"     on public.bag_events;
+drop policy if exists "admins can read"     on public.bag_events;
+drop policy if exists "session admin reads" on public.bag_events;
 
 create policy "anon can insert"
   on public.bag_events for insert
@@ -102,11 +104,15 @@ create trigger products_touch
 
 alter table public.products enable row level security;
 
-drop policy if exists "anon can read live"     on public.products;
-drop policy if exists "admins can read"        on public.products;
-drop policy if exists "admins can write"       on public.products;
+drop policy if exists "anon can read live"      on public.products;
+drop policy if exists "admins can read"         on public.products;
+drop policy if exists "admins can write"        on public.products;
+drop policy if exists "session admin reads"     on public.products;
+drop policy if exists "session admin writes"    on public.products;
+drop policy if exists "session admin updates"   on public.products;
+drop policy if exists "session admin deletes"   on public.products;
 
--- Public can see live + sold-out, but never draft
+-- Public storefront sees live + sold-out, never draft
 create policy "anon can read live"
   on public.products for select
   to anon using (status in ('live','sold-out'));
@@ -118,45 +124,153 @@ create table if not exists public.admins (
 );
 
 alter table public.admins enable row level security;
--- No public read; service role only. Admins use auth.email() to check membership.
+-- No public policies; only SECURITY DEFINER functions read this table.
 
-create or replace function public.is_admin() returns boolean
+-- ─── 6. Custom magic-link auth (EmailJS delivers the email) ─
+create table if not exists public.admin_login_tokens (
+  id          uuid primary key default gen_random_uuid(),
+  email       text not null,
+  expires_at  timestamptz not null,
+  used_at     timestamptz,
+  created_at  timestamptz not null default now()
+);
+alter table public.admin_login_tokens enable row level security;
+-- All access via SECURITY DEFINER RPCs; no public policies.
+
+create table if not exists public.admin_sessions (
+  token       text primary key,
+  email       text not null,
+  expires_at  timestamptz not null,
+  created_at  timestamptz not null default now()
+);
+alter table public.admin_sessions enable row level security;
+-- All access via SECURITY DEFINER RPCs; no public policies.
+
+-- Mint a single-use login token for the given email. Always returns
+-- a UUID so we don't leak which emails are admins; only the matching
+-- token gets persisted and is therefore actually consumable.
+create or replace function public.request_admin_login(p_email text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare v_token uuid;
+begin
+  if not exists (select 1 from public.admins where lower(email) = lower(p_email)) then
+    return gen_random_uuid();   -- decoy
+  end if;
+
+  insert into public.admin_login_tokens (email, expires_at)
+  values (lower(p_email), now() + interval '15 minutes')
+  returning id into v_token;
+  return v_token;
+end;
+$$;
+grant execute on function public.request_admin_login(text) to anon;
+
+-- Consume a login token and create a session. Returns the session
+-- token on success, null on invalid/expired/already-used tokens.
+create or replace function public.consume_admin_login_token(p_token uuid)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  v_email text;
+  v_session text;
+begin
+  update public.admin_login_tokens
+     set used_at = now()
+   where id = p_token
+     and used_at is null
+     and expires_at > now()
+     and email in (select lower(email) from public.admins)
+  returning email into v_email;
+
+  if v_email is null then return null; end if;
+
+  v_session := encode(gen_random_bytes(32), 'hex');
+  insert into public.admin_sessions (token, email, expires_at)
+  values (v_session, v_email, now() + interval '30 days');
+  return v_session;
+end;
+$$;
+grant execute on function public.consume_admin_login_token(uuid) to anon;
+
+-- Reads the X-Admin-Token header from the current request and
+-- returns the matching admin's email, or null.
+create or replace function public.verify_admin_session()
+returns text
+language plpgsql stable security definer set search_path = public as $$
+declare v_token text; v_email text;
+begin
+  begin
+    v_token := (current_setting('request.headers', true)::jsonb) ->> 'x-admin-token';
+  exception when others then
+    return null;
+  end;
+  if v_token is null or length(v_token) < 32 then return null; end if;
+  select email into v_email
+    from public.admin_sessions
+   where token = v_token and expires_at > now();
+  return v_email;
+end;
+$$;
+grant execute on function public.verify_admin_session() to anon;
+
+-- Same helper, but returns boolean — used inside RLS policies.
+create or replace function public.is_admin_session() returns boolean
 language sql stable security definer set search_path = public as $$
-  select exists (select 1 from public.admins where email = auth.email());
+  select public.verify_admin_session() is not null;
 $$;
 
--- ─── 6. Authenticated-admin policies on the other tables ──
-create policy "admins can read"
+-- Sign-out: invalidate the current session.
+create or replace function public.revoke_admin_session()
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v_token text;
+begin
+  begin
+    v_token := (current_setting('request.headers', true)::jsonb) ->> 'x-admin-token';
+  exception when others then
+    return;
+  end;
+  if v_token is not null then
+    delete from public.admin_sessions where token = v_token;
+  end if;
+end;
+$$;
+grant execute on function public.revoke_admin_session() to anon;
+
+-- ─── 7. Admin-side policies (session-token gated) ──────────
+create policy "session admin reads"
   on public.newsletter_subscribers for select
-  to authenticated using (public.is_admin());
-
-create policy "admins can delete"
+  to anon using (public.is_admin_session());
+create policy "session admin deletes"
   on public.newsletter_subscribers for delete
-  to authenticated using (public.is_admin());
+  to anon using (public.is_admin_session());
 
-create policy "admins can read"
+create policy "session admin reads"
   on public.contact_submissions for select
-  to authenticated using (public.is_admin());
-
-create policy "admins can delete"
+  to anon using (public.is_admin_session());
+create policy "session admin deletes"
   on public.contact_submissions for delete
-  to authenticated using (public.is_admin());
+  to anon using (public.is_admin_session());
 
-create policy "admins can read"
+create policy "session admin reads"
   on public.bag_events for select
-  to authenticated using (public.is_admin());
+  to anon using (public.is_admin_session());
 
-create policy "admins can read"
+create policy "session admin reads"
   on public.products for select
-  to authenticated using (public.is_admin());
+  to anon using (public.is_admin_session());
+create policy "session admin writes"
+  on public.products for insert
+  to anon with check (public.is_admin_session());
+create policy "session admin updates"
+  on public.products for update
+  to anon using (public.is_admin_session()) with check (public.is_admin_session());
+create policy "session admin deletes"
+  on public.products for delete
+  to anon using (public.is_admin_session());
 
-create policy "admins can write"
-  on public.products for all
-  to authenticated
-  using (public.is_admin())
-  with check (public.is_admin());
-
--- ─── 7. Add yourself as the first admin ────────────────────
+-- ─── 8. Add yourself as the first admin ────────────────────
 -- IMPORTANT: replace francois.barrailla@gmail.com with your real address
 insert into public.admins (email)
 values ('francois.barrailla@gmail.com')
