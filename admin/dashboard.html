@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STK Admin — Overview</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <header class="main__head">
+        <div>
+          <h1>Overview</h1>
+          <p>What's happening across STK right now.</p>
+        </div>
+      </header>
+
+      <section class="stats" id="stats">
+        <div class="stat"><div class="stat__label">Products</div><div class="stat__value"><span class="spinner"></span></div></div>
+        <div class="stat"><div class="stat__label">Newsletter subscribers</div><div class="stat__value"><span class="spinner"></span></div></div>
+        <div class="stat"><div class="stat__label">Inbox messages</div><div class="stat__value"><span class="spinner"></span></div></div>
+        <div class="stat"><div class="stat__label">Bag events (7d)</div><div class="stat__value"><span class="spinner"></span></div></div>
+      </section>
+
+      <section class="panel" style="margin-bottom: 1.5rem;">
+        <div class="panel__head">
+          <h2>Latest inbox messages</h2>
+          <a class="tab" href="inbox.html">Open inbox →</a>
+        </div>
+        <div id="recentMessages"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel__head">
+          <h2>Recent newsletter signups</h2>
+          <a class="tab" href="inbox.html?tab=newsletter">View all →</a>
+        </div>
+        <div id="recentSubs"></div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module">
+    import { supabase, requireAuth, renderShell, refreshCounts, fmtDate, escape } from './admin.js';
+
+    const session = await requireAuth();
+    if (!session) throw new Error('redirecting');
+    renderShell({ current: 'dashboard', session });
+
+    // Stat tiles
+    const counts = await refreshCounts();
+    const recent7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { count: weekEvents } = await supabase
+      .from('bag_events')
+      .select('id', { count: 'exact', head: true })
+      .gte('created_at', recent7d);
+
+    const stats = document.getElementById('stats');
+    stats.innerHTML = `
+      <div class="stat"><div class="stat__label">Products</div><div class="stat__value">${counts.products}</div></div>
+      <div class="stat"><div class="stat__label">Newsletter subscribers</div><div class="stat__value">${counts.newsletter_subscribers}</div></div>
+      <div class="stat"><div class="stat__label">Inbox messages</div><div class="stat__value">${counts.contact_submissions}</div></div>
+      <div class="stat"><div class="stat__label">Bag events (7d)</div><div class="stat__value">${weekEvents ?? 0}</div></div>
+    `;
+
+    // Recent contact messages
+    const { data: msgs } = await supabase
+      .from('contact_submissions')
+      .select('id, name, email, subject, message, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    const recent = document.getElementById('recentMessages');
+    if (!msgs || msgs.length === 0) {
+      recent.innerHTML = `<div class="empty"><strong>No messages yet</strong>Inbox is clean.</div>`;
+    } else {
+      recent.innerHTML = `
+        <table>
+          <thead><tr><th>From</th><th>Subject</th><th>Preview</th><th class="right">Received</th></tr></thead>
+          <tbody>
+          ${msgs.map(m => `
+            <tr>
+              <td><strong>${escape(m.name)}</strong><br><span class="mono">${escape(m.email)}</span></td>
+              <td>${escape(m.subject ?? '—')}</td>
+              <td>${escape((m.message ?? '').slice(0, 90))}${(m.message ?? '').length > 90 ? '…' : ''}</td>
+              <td class="right mono">${fmtDate(m.created_at)}</td>
+            </tr>
+          `).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    // Recent subscribers
+    const { data: subs } = await supabase
+      .from('newsletter_subscribers')
+      .select('email, source, created_at')
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    const subsEl = document.getElementById('recentSubs');
+    if (!subs || subs.length === 0) {
+      subsEl.innerHTML = `<div class="empty"><strong>No subscribers yet</strong>Newsletter signups will land here.</div>`;
+    } else {
+      subsEl.innerHTML = `
+        <table>
+          <thead><tr><th>Email</th><th>Source</th><th class="right">Signed up</th></tr></thead>
+          <tbody>
+          ${subs.map(s => `
+            <tr>
+              <td class="mono">${escape(s.email)}</td>
+              <td><span class="badge badge--quiet">${escape(s.source ?? '/')}</span></td>
+              <td class="right mono">${fmtDate(s.created_at)}</td>
+            </tr>
+          `).join('')}
+          </tbody>
+        </table>`;
+    }
+  </script>
+</body>
+</html>

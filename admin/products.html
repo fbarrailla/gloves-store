@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STK Admin — Products</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <header class="main__head">
+        <div>
+          <h1>Products</h1>
+          <p>Manage drops, colorways, prices and stock.</p>
+        </div>
+        <button class="btn" id="newBtn">+ New product</button>
+      </header>
+
+      <section class="panel">
+        <div class="panel__head">
+          <h2>All products</h2>
+          <span class="count" id="countLine"><span class="spinner"></span></span>
+        </div>
+        <div id="tableHost"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Edit / create modal — built lazily -->
+  <div id="modalHost"></div>
+
+  <script type="module">
+    import { supabase, requireAuth, renderShell, refreshCounts, toast, escape } from './admin.js';
+
+    const CUTS = ['negative', 'roll', 'flat'];
+    const STATUSES = ['live', 'sold-out', 'draft'];
+
+    const session = await requireAuth();
+    renderShell({ current: 'products', session });
+    refreshCounts();
+
+    const tableHost = document.getElementById('tableHost');
+    const countLine = document.getElementById('countLine');
+    const modalHost = document.getElementById('modalHost');
+
+    async function load() {
+      tableHost.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+      const { data, error } = await supabase
+        .from('products')
+        .select('*')
+        .order('sku', { ascending: true });
+      if (error) { tableHost.innerHTML = `<div class="empty"><strong>${escape(error.message)}</strong></div>`; return; }
+      countLine.textContent = `${data.length} products`;
+      if (!data || data.length === 0) {
+        tableHost.innerHTML = `
+          <div class="empty">
+            <strong>No products yet</strong>
+            Click <em>+ New product</em> to add your first one.
+          </div>`;
+        return;
+      }
+      tableHost.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th></th><th>SKU</th><th>Name</th><th>Cut</th><th>Status</th>
+              <th class="right">Price</th><th class="right">Stock</th><th></th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.map(p => `
+              <tr data-id="${p.id}">
+                <td>
+                  <div class="thumb-cell">
+                    ${p.image_url ? `<img src="${escape(p.image_url)}" alt="">` : `<span style="font-size:9px;color:var(--quiet)">no img</span>`}
+                  </div>
+                </td>
+                <td class="mono">${escape(p.sku ?? '—')}</td>
+                <td><strong>${escape(p.name)}</strong><br><span style="color:var(--quiet);font-size:11px;">${escape(p.subtitle ?? '')}</span></td>
+                <td>${escape(p.cut ?? '—')}</td>
+                <td>${statusBadge(p.status)}</td>
+                <td class="right mono">${p.price_idr ? 'IDR ' + p.price_idr.toLocaleString('id-ID') : '—'}</td>
+                <td class="right mono">${p.stock ?? 0} / ${p.stock_max ?? 0}</td>
+                <td>
+                  <span class="row-actions">
+                    <button data-action="edit">Edit</button>
+                    <button data-action="delete" class="danger">Delete</button>
+                  </span>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>`;
+    }
+
+    function statusBadge(s) {
+      if (s === 'live')     return `<span class="badge badge--ok">Live</span>`;
+      if (s === 'sold-out') return `<span class="badge badge--strike">Sold out</span>`;
+      return `<span class="badge badge--quiet">Draft</span>`;
+    }
+
+    document.addEventListener('click', async (e) => {
+      const row = e.target.closest('tr[data-id]');
+      const action = e.target.dataset.action;
+      if (row && action === 'edit') {
+        const { data } = await supabase.from('products').select('*').eq('id', row.dataset.id).single();
+        openEditor(data);
+      } else if (row && action === 'delete') {
+        if (!confirm(`Delete "${row.querySelector('strong').textContent}"? This cannot be undone.`)) return;
+        const { error } = await supabase.from('products').delete().eq('id', row.dataset.id);
+        if (error) return toast(error.message, 'err');
+        toast('Product deleted');
+        load();
+      }
+    });
+
+    document.getElementById('newBtn').addEventListener('click', () => openEditor(null));
+
+    function openEditor(product) {
+      const p = product ?? {
+        sku: '', name: '', subtitle: '',
+        cut: 'negative', status: 'draft',
+        price_idr: 0, price_idr_compare: null,
+        stock: 0, stock_max: 0,
+        image_url: '', position: 999,
+      };
+      const isNew = !product;
+
+      modalHost.innerHTML = `
+        <div class="modal__scrim">
+          <form class="modal" id="editForm">
+            <header class="modal__head">
+              <h3>${isNew ? 'New product' : 'Edit ' + escape(p.sku ?? p.name)}</h3>
+              <button type="button" class="modal__close" data-close>×</button>
+            </header>
+            <div class="modal__body">
+              <div class="field__row">
+                <div class="field"><label>SKU</label><input name="sku" value="${escape(p.sku)}" placeholder="APX-001" required></div>
+                <div class="field"><label>Position</label><input name="position" type="number" value="${p.position ?? 999}"></div>
+              </div>
+              <div class="field"><label>Name</label><input name="name" value="${escape(p.name)}" placeholder="Apex 001" required></div>
+              <div class="field"><label>Subtitle</label><input name="subtitle" value="${escape(p.subtitle ?? '')}" placeholder="Sodium · 4 mm contact latex"></div>
+              <div class="field__row">
+                <div class="field">
+                  <label>Cut</label>
+                  <select name="cut">
+                    ${CUTS.map(c => `<option value="${c}"${c === p.cut ? ' selected' : ''}>${c}</option>`).join('')}
+                  </select>
+                </div>
+                <div class="field">
+                  <label>Status</label>
+                  <select name="status">
+                    ${STATUSES.map(s => `<option value="${s}"${s === p.status ? ' selected' : ''}>${s}</option>`).join('')}
+                  </select>
+                </div>
+              </div>
+              <div class="field__row">
+                <div class="field"><label>Price (IDR)</label><input name="price_idr" type="number" value="${p.price_idr ?? 0}" min="0"></div>
+                <div class="field"><label>Compare price (optional)</label><input name="price_idr_compare" type="number" value="${p.price_idr_compare ?? ''}" min="0"></div>
+              </div>
+              <div class="field__row">
+                <div class="field"><label>Stock left</label><input name="stock" type="number" value="${p.stock ?? 0}" min="0"></div>
+                <div class="field"><label>Stock max</label><input name="stock_max" type="number" value="${p.stock_max ?? 0}" min="0"></div>
+              </div>
+              <div class="field">
+                <label>Image URL</label>
+                <input name="image_url" value="${escape(p.image_url ?? '')}" placeholder="images/gloves-01.jpg">
+                <span class="field__hint">Relative paths like <code>images/gloves-01.jpg</code> resolve against the public site.</span>
+              </div>
+            </div>
+            <footer class="modal__foot">
+              <button type="button" class="btn btn--ghost btn--sm" data-close>Cancel</button>
+              <button type="submit" class="btn btn--sm" id="saveBtn">${isNew ? 'Create product' : 'Save changes'}</button>
+            </footer>
+          </form>
+        </div>
+      `;
+
+      modalHost.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => modalHost.innerHTML = ''));
+      modalHost.querySelector('.modal__scrim').addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) modalHost.innerHTML = '';
+      });
+
+      modalHost.querySelector('#editForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = Object.fromEntries(new FormData(e.target));
+        const payload = {
+          sku: fd.sku.trim(),
+          name: fd.name.trim(),
+          subtitle: fd.subtitle.trim() || null,
+          cut: fd.cut,
+          status: fd.status,
+          price_idr: fd.price_idr ? Number(fd.price_idr) : 0,
+          price_idr_compare: fd.price_idr_compare ? Number(fd.price_idr_compare) : null,
+          stock: Number(fd.stock || 0),
+          stock_max: Number(fd.stock_max || 0),
+          image_url: fd.image_url.trim() || null,
+          position: Number(fd.position || 999),
+        };
+        const saveBtn = modalHost.querySelector('#saveBtn');
+        saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+        let err;
+        if (isNew) ({ error: err } = await supabase.from('products').insert(payload));
+        else       ({ error: err } = await supabase.from('products').update(payload).eq('id', p.id));
+        if (err) { toast(err.message, 'err'); saveBtn.disabled = false; saveBtn.textContent = isNew ? 'Create product' : 'Save changes'; return; }
+        toast(isNew ? 'Product created' : 'Changes saved');
+        modalHost.innerHTML = '';
+        load();
+      });
+    }
+
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STK Admin — Sign in</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body class="login">
+  <div class="login__card">
+    <a class="login__brand" href="../index.html">STK <small>admin</small></a>
+    <h1>Sign in to admin</h1>
+    <p class="login__lede">Enter your email and we'll send a one-tap sign-in link. No password needed.</p>
+    <form id="loginForm" autocomplete="off">
+      <div class="field">
+        <input type="email" id="email" placeholder="you@stk.id" required autocomplete="email">
+      </div>
+      <button type="submit" class="btn btn--full" id="submitBtn">Send magic link</button>
+    </form>
+    <p class="login__hint" id="status">
+      Magic links arrive within ~30 seconds. Check spam if you don't see it.
+    </p>
+  </div>
+
+  <script type="module">
+    import { supabase, toast } from './admin.js';
+
+    // If already signed in, go to dashboard
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session) location.replace('dashboard.html');
+
+    const form = document.getElementById('loginForm');
+    const btn = document.getElementById('submitBtn');
+    const status = document.getElementById('status');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const email = document.getElementById('email').value.trim();
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          // After clicking the link the user lands on dashboard.html.
+          // Make sure this URL is added to "Redirect URLs" in Supabase Auth settings.
+          emailRedirectTo: new URL('dashboard.html', location.href).toString(),
+          shouldCreateUser: true,
+        },
+      });
+      if (error) {
+        toast(error.message || 'Could not send link', 'err');
+        status.textContent = error.message;
+        btn.disabled = false;
+        btn.textContent = 'Send magic link';
+        return;
+      }
+      status.innerHTML = `Magic link sent to <strong style="color:var(--ink)">${email}</strong>. Open it on this device to finish signing in.`;
+      btn.textContent = '✓ Link sent';
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>STK Admin — Inbox</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar"></aside>
+
+    <main class="main">
+      <header class="main__head">
+        <div>
+          <h1>Inbox</h1>
+          <p>Contact submissions and newsletter signups.</p>
+        </div>
+      </header>
+
+      <section class="panel">
+        <div class="panel__head">
+          <div class="tabs">
+            <button class="tab on" data-tab="messages">Messages <span class="pill" data-count="contact_submissions"></span></button>
+            <button class="tab" data-tab="newsletter">Newsletter <span class="pill" data-count="newsletter_subscribers"></span></button>
+          </div>
+          <button class="btn btn--ghost btn--sm" id="exportBtn">Export CSV</button>
+        </div>
+        <div id="tableHost"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modalHost"></div>
+
+  <script type="module">
+    import { supabase, requireAuth, renderShell, refreshCounts, toast, fmtDate, escape } from './admin.js';
+
+    const session = await requireAuth();
+    renderShell({ current: 'inbox', session });
+    refreshCounts();
+
+    const tableHost = document.getElementById('tableHost');
+    const modalHost = document.getElementById('modalHost');
+    let currentTab = new URLSearchParams(location.search).get('tab') || 'messages';
+
+    function setTab(t) {
+      currentTab = t;
+      document.querySelectorAll('.tab[data-tab]').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+      load();
+    }
+
+    document.querySelectorAll('.tab[data-tab]').forEach(b => {
+      b.addEventListener('click', () => setTab(b.dataset.tab));
+    });
+    if (currentTab !== 'messages') setTab(currentTab);
+
+    async function load() {
+      tableHost.innerHTML = `<div class="empty"><span class="spinner"></span></div>`;
+      if (currentTab === 'messages') {
+        const { data, error } = await supabase
+          .from('contact_submissions')
+          .select('id, name, email, subject, message, created_at')
+          .order('created_at', { ascending: false });
+        if (error) return tableHost.innerHTML = `<div class="empty"><strong>${escape(error.message)}</strong></div>`;
+        if (!data || data.length === 0) {
+          tableHost.innerHTML = `<div class="empty"><strong>Inbox is empty</strong>Custom-pair inquiries from /about will land here.</div>`;
+          return;
+        }
+        tableHost.innerHTML = `
+          <table>
+            <thead><tr><th>From</th><th>Subject</th><th>Preview</th><th class="right">Received</th><th></th></tr></thead>
+            <tbody>
+              ${data.map(m => `
+                <tr data-id="${m.id}">
+                  <td><strong>${escape(m.name)}</strong><br><span class="mono" style="color:var(--quiet);font-size:11px;">${escape(m.email)}</span></td>
+                  <td>${escape(m.subject ?? '—')}</td>
+                  <td>${escape((m.message ?? '').slice(0, 120))}${(m.message ?? '').length > 120 ? '…' : ''}</td>
+                  <td class="right mono">${fmtDate(m.created_at)}</td>
+                  <td><span class="row-actions"><button data-action="view">View</button></span></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`;
+      } else {
+        const { data, error } = await supabase
+          .from('newsletter_subscribers')
+          .select('email, source, created_at')
+          .order('created_at', { ascending: false });
+        if (error) return tableHost.innerHTML = `<div class="empty"><strong>${escape(error.message)}</strong></div>`;
+        if (!data || data.length === 0) {
+          tableHost.innerHTML = `<div class="empty"><strong>No subscribers yet</strong>Newsletter signups will appear here.</div>`;
+          return;
+        }
+        tableHost.innerHTML = `
+          <table>
+            <thead><tr><th>Email</th><th>Source</th><th class="right">Signed up</th></tr></thead>
+            <tbody>
+              ${data.map(s => `
+                <tr>
+                  <td class="mono">${escape(s.email)}</td>
+                  <td><span class="badge badge--quiet">${escape(s.source ?? '/')}</span></td>
+                  <td class="right mono">${fmtDate(s.created_at)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`;
+      }
+    }
+
+    // Message view modal
+    document.addEventListener('click', async (e) => {
+      const row = e.target.closest('tr[data-id]');
+      if (!row || e.target.dataset.action !== 'view') return;
+      const { data: m } = await supabase.from('contact_submissions').select('*').eq('id', row.dataset.id).single();
+      if (!m) return;
+      modalHost.innerHTML = `
+        <div class="modal__scrim">
+          <div class="modal">
+            <header class="modal__head">
+              <h3>${escape(m.subject ?? 'Message')}</h3>
+              <button class="modal__close" data-close>×</button>
+            </header>
+            <div class="modal__body">
+              <div>
+                <div style="font-weight:700;">${escape(m.name)}</div>
+                <a href="mailto:${escape(m.email)}" class="mono" style="color:var(--quiet);font-size:12px;">${escape(m.email)}</a>
+              </div>
+              <div style="font-size:11px; color:var(--quiet); text-transform:uppercase; letter-spacing:0.06em;">${fmtDate(m.created_at)}</div>
+              <hr style="border:0;border-top:1px solid var(--rule);margin:0;">
+              <div style="white-space:pre-wrap; line-height:1.6;">${escape(m.message)}</div>
+            </div>
+            <footer class="modal__foot">
+              <a href="mailto:${escape(m.email)}?subject=Re: ${encodeURIComponent(m.subject ?? '')}" class="btn btn--sm">Reply by email</a>
+              <button class="btn btn--ghost btn--sm" data-close>Close</button>
+            </footer>
+          </div>
+        </div>`;
+      modalHost.querySelectorAll('[data-close]').forEach(b => b.addEventListener('click', () => modalHost.innerHTML = ''));
+      modalHost.querySelector('.modal__scrim').addEventListener('click', (e2) => {
+        if (e2.target === e2.currentTarget) modalHost.innerHTML = '';
+      });
+    });
+
+    // CSV export
+    document.getElementById('exportBtn').addEventListener('click', async () => {
+      const table = currentTab === 'messages' ? 'contact_submissions' : 'newsletter_subscribers';
+      const { data, error } = await supabase.from(table).select('*').order('created_at', { ascending: false });
+      if (error) return toast(error.message, 'err');
+      if (!data || !data.length) return toast('Nothing to export');
+      const cols = Object.keys(data[0]);
+      const csv = [cols.join(',')].concat(
+        data.map(row => cols.map(c => {
+          const v = row[c] ?? '';
+          const s = String(v).replaceAll('"', '""');
+          return /[",\n]/.test(s) ? `"${s}"` : s;
+        }).join(','))
+      ).join('\n');
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = Object.assign(document.createElement('a'), {
+        href: url,
+        download: `stk-${table}-${new Date().toISOString().slice(0, 10)}.csv`,
+      });
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    load();
+  </script>
+</body>
+</html>
