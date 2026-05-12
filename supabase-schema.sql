@@ -11,6 +11,11 @@
 --   2. Insert YOUR email into public.admins (last block of this file).
 -- ============================================================
 
+-- ─── 0. Extensions ─────────────────────────────────────────
+-- pgcrypto provides gen_random_bytes() used by the session-token mint
+-- below. On Supabase it lives in the `extensions` schema by convention.
+create extension if not exists pgcrypto with schema extensions;
+
 -- ─── 1. Newsletter ─────────────────────────────────────────
 create table if not exists public.newsletter_subscribers (
   id          uuid primary key default gen_random_uuid(),
@@ -185,7 +190,7 @@ begin
 
   if v_email is null then return null; end if;
 
-  v_session := encode(gen_random_bytes(32), 'hex');
+  v_session := encode(extensions.gen_random_bytes(32), 'hex');
   insert into public.admin_sessions (token, email, expires_at)
   values (v_session, v_email, now() + interval '30 days');
   return v_session;
@@ -213,6 +218,19 @@ begin
 end;
 $$;
 grant execute on function public.verify_admin_session() to anon;
+
+-- Same check, but with the token passed explicitly. Used by the JS
+-- auth guard so it doesn't depend on PostgREST forwarding custom
+-- headers into request.headers (which can be unreliable).
+create or replace function public.verify_admin_session_token(p_token text)
+returns text
+language sql stable security definer set search_path = public as $$
+  select email
+    from public.admin_sessions
+   where token = p_token
+     and expires_at > now()
+$$;
+grant execute on function public.verify_admin_session_token(text) to anon;
 
 -- Same helper, but returns boolean — used inside RLS policies.
 create or replace function public.is_admin_session() returns boolean

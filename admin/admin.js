@@ -45,7 +45,13 @@ export function toast(msg, kind = '') {
 /* ----- auth guard ----- */
 export async function requireAuth() {
   if (!sessionToken) { location.href = 'index.html'; return null; }
-  const { data: email, error } = await supabase.rpc('verify_admin_session');
+  // Pass the token explicitly so we don't depend on PostgREST surfacing
+  // X-Admin-Token in request.headers (which it doesn't always do).
+  const { data: email, error } = await supabase.rpc(
+    'verify_admin_session_token',
+    { p_token: sessionToken },
+  );
+  if (error) console.error('[admin] verify_admin_session_token error:', error);
   if (error || !email) {
     localStorage.removeItem(SESSION_KEY);
     location.href = 'index.html';
