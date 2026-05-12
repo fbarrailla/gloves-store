@@ -33,8 +33,12 @@
     } from './admin.js';
 
     // If already signed in, go straight to the dashboard.
-    if (localStorage.getItem(SESSION_KEY)) {
-      const { data: email } = await supabase.rpc('verify_admin_session');
+    const existingToken = localStorage.getItem(SESSION_KEY);
+    if (existingToken) {
+      const { data: email } = await supabase.rpc(
+        'verify_admin_session_token',
+        { p_token: existingToken },
+      );
       if (email) location.replace('dashboard.html');
       else localStorage.removeItem(SESSION_KEY);
     }
